@@ -1,0 +1,46 @@
+# Desktop CNC camera bridge configuration
+# Copy to config.toml and run:  python -m cnc_camera --config config.toml
+
+[server]
+host = "0.0.0.0" # 0.0.0.0 = reachable from other computers on the same network
+port = 8090 # 8080 is taken by UGS
+token = ""  # set a secret to require ?token=... IT will probably need this
+cors_origins = ["*"] # IE: ["https://desktop-cnc-landing-site.onrender.com", "http://localhost:3000"]
+max_stream_clients = 8 # each viewer costs ~1 MB/s at VGA 20 fps
+
+[machine]
+ugs_pendant_url = ""  # "http://127.0.0.1:8080" once the UGS pendant is started; empty = off
+poll_interval_s = 1.0
+
+# OpenMV Cam H7 Plus
+[[cameras]]
+id = "spindle"
+name = "Spindle camera (OpenMV)"
+type = "openmv"
+enabled = false  # set to true when the H7 is installed
+port = "auto"  # or /dev/ttyACM0
+framesize = "VGA"  # QVGA | VGA | SVGA | HD (USB can only do HD at ~10 fps)
+pixformat = "RGB565"  # grayscale is lighter/faster
+fps = 15
+jpeg_quality = 60
+hmirror = false
+vflip = false
+analyzers = []
+
+# USB webcam
+[[cameras]]
+id = "webcam"
+name = "USB webcam"
+type = "webcam"
+device = 0 # index, "/dev/video0", or HTTP URL
+width = 1280
+height = 720
+fps = 15
+jpeg_quality = 70
+rotate = 0
+analyzers = []
+
+# analyzer example
+# [cameras.analyzer_options.camera_health]
+# dark_level = 25
+# blur_threshold = 15

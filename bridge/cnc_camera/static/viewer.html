@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Desktop CNC · Live Camera</title>
+<style>
+  :root { --navy:#2c3e50; --navy2:#1a252f; --orange:#f39c12; --bg:#f4f5f7; --text:#2d3436; --muted:#6b7280;
+          --ok:#1e9e5a; --warn:#d98a00; --bad:#c0392b; }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,sans-serif; background:var(--bg); color:var(--text); }
+  header { background:linear-gradient(90deg,#34495e 0%,var(--navy2) 100%); color:#fff; padding:.8rem 1.4rem; display:flex; gap:1rem; align-items:center; flex-wrap:wrap; }
+  header h1 { font-size:1.25rem; margin:0; font-weight:700; }
+  header h1 span { font-weight:300; opacity:.75; margin-left:.5rem; }
+  header .spacer { flex:1; }
+  select, button { font:inherit; border-radius:8px; border:1px solid #cfd4da; padding:.4rem .75rem; background:#fff; color:var(--text); cursor:pointer; }
+  button.primary { background:var(--orange); border-color:var(--orange); color:#1a1a1a; font-weight:600; }
+  button:disabled { opacity:.5; cursor:default; }
+  main { max-width:1200px; margin:1.2rem auto; padding:0 1rem; display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:1rem; }
+  @media (max-width: 900px) { main { grid-template-columns:1fr; } }
+  .card { background:#fff; border-radius:10px; box-shadow:0 2px 8px rgba(0,0,0,.08); padding:1rem; }
+  .video { position:relative; background:#111; border-radius:10px; overflow:hidden; aspect-ratio:4/3; display:flex; align-items:center; justify-content:center; }
+  .video img { width:100%; height:100%; object-fit:contain; display:block; }
+  .badge { position:absolute; top:.6rem; left:.6rem; background:rgba(0,0,0,.6); color:#fff; padding:.25rem .6rem; border-radius:999px; font-size:.8rem; display:flex; gap:.4rem; align-items:center; }
+  .dot { width:.6rem; height:.6rem; border-radius:50%; background:var(--muted); }
+  .dot.streaming { background:var(--ok); } .dot.connecting { background:var(--warn); } .dot.error { background:var(--bad); }
+  .toolbar { display:flex; gap:.5rem; margin-top:.75rem; flex-wrap:wrap; }
+  dl { display:grid; grid-template-columns:auto 1fr; gap:.3rem .8rem; margin:0; font-size:.9rem; }
+  dt { color:var(--muted); } dd { margin:0; font-variant-numeric:tabular-nums; word-break:break-all; }
+  h2 { font-size:1rem; margin:0 0 .6rem; }
+  #events { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.75rem; max-height:260px; overflow:auto; margin:0; padding:0; list-style:none; }
+  #events li { padding:.2rem 0; border-bottom:1px solid #eee; }
+  #events .warn { color:var(--warn); } #events .alarm { color:var(--bad); font-weight:700; }
+  .err { color:var(--bad); font-size:.9rem; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Desktop CNC<span>Live Camera</span></h1>
+  <div class="spacer"></div>
+  <label for="cam" style="opacity:.8">Camera</label>
+  <select id="cam"></select>
+  <select id="fps" title="Limit frame rate (useful on slow Wi-Fi)">
+    <option value="">Full rate</option><option value="10">10 fps</option>
+    <option value="5">5 fps</option><option value="1">1 fps</option>
+  </select>
+</header>
+<main>
+  <section>
+    <div class="video" id="videoBox">
+      <img id="stream" alt="Live camera feed">
+      <div class="badge"><span class="dot" id="dot"></span><span id="stateText">connecting</span></div>
+    </div>
+    <div class="toolbar">
+      <button class="primary" id="snap">Save snapshot</button>
+      <button id="hires" disabled title="High-resolution still (OpenMV only)">Hi-res still</button>
+      <button id="full">Fullscreen</button>
+      <span class="err" id="err"></span>
+    </div>
+  </section>
+  <aside>
+    <div class="card">
+      <h2>Status</h2>
+      <dl id="status"></dl>
+    </div>
+    <div class="card" style="margin-top:1rem">
+      <h2>Events</h2>
+      <ul id="events"></ul>
+    </div>
+  </aside>
+</main>
+<script>
+(() => {
+  const params = new URLSearchParams(location.search);
+  const token = params.get("token") || "";
+  const q = (extra = {}) => {
+    const p = new URLSearchParams(extra);
+    if (token) p.set("token", token);
+    const s = p.toString();
+    return s ? "?" + s : "";
+  };
+  const $ = (id) => document.getElementById(id);
+  const img = $("stream"), camSel = $("cam"), fpsSel = $("fps");
+  let cameras = [], current = params.get("camera") || "", retry = null;
+
+  function streamUrl() {
+    const extra = { t: Date.now() };
+    if (fpsSel.value) extra.fps = fpsSel.value;
+    return `/api/cameras/${encodeURIComponent(current)}/stream.mjpg${q(extra)}`;
+  }
+  function startStream() {
+    clearTimeout(retry);
+    img.src = streamUrl();
+  }
+  img.onerror = () => { // bridge restarted / network blip: back off and retry
+    $("stateText").textContent = "reconnecting";
+    $("dot").className = "dot connecting";
+    clearTimeout(retry);
+    retry = setTimeout(startStream, 2000);
+  };
+
+  async function refresh() {
+    try {
+      const r = await fetch(`/api/cameras${q()}`);
+      if (r.status === 401) { $("err").textContent = "Access token required: add ?token=... to the URL"; return; }
+      const data = await r.json();
+      cameras = data.cameras;
+      if (!current) current = data.default;
+      if (camSel.options.length !== cameras.length) {
+        camSel.innerHTML = cameras.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
+        camSel.value = current;
+        startStream();
+      }
+      const c = cameras.find(c => c.id === current) || cameras[0];
+      $("dot").className = "dot " + c.state;
+      $("stateText").textContent = c.state + (c.fps ? ` · ${c.fps} fps` : "");
+      $("hires").disabled = !c.capabilities.includes("hires_snapshot") || c.state !== "streaming";
+      const rows = [["Type", c.type], ["State", c.state], ["Resolution", c.width ? `${c.width}×${c.height}` : "—"],
+        ["Frame rate", c.fps + " fps"], ["Viewers", c.viewers],
+        ["Last frame", c.last_frame_ts ? new Date(c.last_frame_ts * 1000).toLocaleTimeString() : "—"]];
+      if (c.error) rows.push(["Error", c.error]);
+      for (const [k, v] of Object.entries(c.info || {})) rows.push([k, typeof v === "object" ? JSON.stringify(v) : v]);
+      if (data.machine) rows.push(["Machine", data.machine.connected ? (data.machine.state || "?") : "UGS not reachable"]);
+      $("status").innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${String(v)}</dd>`).join("");
+      $("err").textContent = "";
+    } catch (e) {
+      $("err").textContent = "Bridge not reachable";
+    }
+  }
+
+  function addEvent(ev) {
+    if (ev.type === "hello") { (ev.recent || []).forEach(addEvent); return; }
+    const li = document.createElement("li");
+    const t = new Date((ev.ts || Date.now() / 1000) * 1000).toLocaleTimeString();
+    const { type, camera, ts, ...rest } = ev;
+    li.textContent = `${t} ${type}${camera ? " [" + camera + "]" : ""} ${JSON.stringify(rest)}`;
+    if (ev.severity) li.className = ev.severity;
+    const list = $("events");
+    list.prepend(li);
+    while (list.children.length > 100) list.lastChild.remove();
+  }
+  function connectEvents() {
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    const ws = new WebSocket(`${proto}://${location.host}/api/events${q()}`);
+    ws.onmessage = (m) => { try { addEvent(JSON.parse(m.data)); } catch {} };
+    ws.onclose = () => setTimeout(connectEvents, 3000);
+  }
+
+  async function download(url, name) {
+    const r = await fetch(url);
+    if (!r.ok) { $("err").textContent = await r.text(); return; }
+    const blob = await r.blob();
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+  const stamp = () => new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  $("snap").onclick = () => download(`/api/cameras/${current}/snapshot.jpg${q()}`, `${current}-${stamp()}.jpg`);
+  $("hires").onclick = async () => {
+    $("hires").disabled = true; $("hires").textContent = "Capturing…";
+    await download(`/api/cameras/${current}/snapshot.jpg${q({ hires: 1 })}`, `${current}-hires-${stamp()}.jpg`);
+    $("hires").textContent = "Hi-res still"; refresh();
+  };
+  $("full").onclick = () => $("videoBox").requestFullscreen?.();
+  camSel.onchange = () => { current = camSel.value; startStream(); refresh(); };
+  fpsSel.onchange = startStream;
+
+  refresh().then(() => { if (current && !img.src) startStream(); });
+  setInterval(refresh, 2000);
+  connectEvents();
+})();
+</script>
+</body>
+</html>

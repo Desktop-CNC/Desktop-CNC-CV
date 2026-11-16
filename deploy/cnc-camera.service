@@ -1,0 +1,18 @@
+# Installed by deploy/install_pi.sh
+[Unit]
+Description=Desktop CNC camera bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__DIR__/bridge
+ExecStart=__DIR__/bridge/.venv/bin/python -m cnc_camera --config __DIR__/bridge/config.toml
+Restart=always
+RestartSec=3
+# serial and video device access
+SupplementaryGroups=dialout video
+
+[Install]
+WantedBy=multi-user.target

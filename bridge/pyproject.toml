@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cnc-camera"
+version = "0.1.0"
+description = "Desktop CNC camera bridge: OpenMV H7 Plus / USB webcam -> MJPEG + events over HTTP"
+requires-python = ">=3.11"
+dependencies = [
+  "aiohttp>=3.9",
+  "pyserial>=3.5",
+  "numpy>=1.24",
+  "opencv-python-headless>=4.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-aiohttp>=1.0"]
+
+[project.scripts]
+cnc-camera = "cnc_camera.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["cnc_camera*"]
+
+[tool.setuptools.package-data]
+"cnc_camera.static" = ["*.html"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
